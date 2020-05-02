@@ -1,23 +1,21 @@
 import requests
 import json
 import time
-
-passwd = ''
-vlc_host = 'localhost:8080'
-sync_server = 'localhost:3000'
+from plexapi.server import PlexServer
 
 
-def loop():
+def loop_vlc():
     prev_state = 'paused'
     while True:
-        vlc_status = json.loads(requests.get('http://' + vlc_host + '/requests/status.json', auth=('', passwd)).text)
+        vlc_status = json.loads(requests.get(vlc_url + '/requests/status.json',
+                                             auth=('', passwd)).text)
         state = vlc_status['state']
         if state != prev_state:
             payload = {'status': state}
-            requests.post('http://' + sync_server + '/status/set', payload)
+            requests.post(sync_url + '/status/set', payload)
             print(state)
 
-        server_state = json.loads(requests.get('http://' + sync_server + '/status').text)
+        server_state = json.loads(requests.get(sync_url + '/status').text)
         if state != server_state['status']:
             if server_state['status'] == 'playing':
                 send_command('command=pl_play')
@@ -28,12 +26,64 @@ def loop():
         time.sleep(0.2)
 
 
+def loop_plex():
+    prev_state = 'paused'
+    while True:
+        if client.isPlayingMedia():
+            state = 'playing'
+        else:
+            state = 'paused'
+
+        if state != prev_state:
+            payload = {'status': state}
+            requests.post(sync_url + '/status/set', payload)
+            print(state)
+
+        server_state = json.loads(requests.get(sync_url + '/status').text)
+        if state != server_state['status']:
+            if server_state['status'] == 'playing':
+                client.play()
+            if server_state['status'] == 'paused':
+                client.pause()
+        prev_state = state
+        time.sleep(0.2)
+
+
 def send_command(command):
-    return requests.get('http://' + vlc_host + '/requests/status.json?' + command,
+    return requests.get(vlc_url + '/requests/status.json?' + command,
                         auth=('', passwd))
 
 
+def get_prop(config, prop_key, prop_type=str):
+    if prop_key in config:
+        return prop_type(config[prop_key])
+    else:
+        return prop_type(input(f'Please enter the: {prop_key}:'))
+
+
 if __name__ == '__main__':
-    passwd = input('Please enter your VLC password:')
-    sync_server = input('Please enter the address for the sync server:')
-    loop()
+    try:
+        with open('config.json') as config_file:
+            config = json.loads(config_file.read())
+    except:
+        config = {}
+
+    client_type = get_prop(config, 'client_type')
+    sync_url = get_prop(config, 'sync_url')
+
+    if client_type == 'vlc':
+        passwd = get_prop(config, 'passwd')
+        vlc_url = get_prop(config, 'vlc_url')
+        loop_vlc()
+
+    elif client_type == 'plex':
+        token = get_prop(config, 'token')
+        plex_url = get_prop(config, 'plex_url')
+        client_name = get_prop(config, 'client_name')
+        plex = PlexServer(plex_url, token)
+        client = plex.client(client_name)
+        client.pause()
+        loop_plex()
+
+    else:
+        print('Invalid client type!!!!!')
